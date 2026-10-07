@@ -64,7 +64,7 @@ header.top .wrap{display:flex;align-items:center;justify-content:space-between;g
 main{padding-block:24px 56px;display:grid;gap:28px}
 section h2{font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0 0 12px;display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap}
 section h2 span{font-weight:400;letter-spacing:0;text-transform:none;font-size:13px}
-.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,170px),1fr));gap:12px}
 .kpi{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;box-shadow:var(--shadow)}
 .kpi .l{font-size:12px;color:var(--muted);letter-spacing:.04em;text-transform:uppercase}
 .kpi .v{font:600 28px/1.1 var(--mono);margin-top:6px;font-variant-numeric:tabular-nums}
@@ -104,12 +104,13 @@ td.r,th.r{text-align:right}
 .legend i{display:inline-block;width:12px;height:12px;border-radius:3px;vertical-align:-2px;margin-right:5px}
 .two{display:grid;grid-template-columns:1.1fr .9fr;gap:20px}
 @media (max-width:900px){.two{grid-template-columns:1fr}}
-.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:12px}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,360px),1fr));gap:12px}
 .chart-card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow)}
 .chart-card header{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--line)}
 .chart-card header .t{font-weight:600}
 .chart-card header .s{font:12px var(--mono);color:var(--ink-2)}
-.chart-card table td,.chart-card table th{padding:8px 14px;font-size:13px}
+.chart-card table td,.chart-card table th{padding:8px 10px;font-size:13px}
+.chart-card .rate{min-width:120px}.chart-card .rate .bar{width:56px}
 .rules{font-size:13px;color:var(--ink-2);background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:var(--radius);padding:14px 16px;line-height:1.6}
 .rules b{color:var(--ink)}
 .state{padding:40px;text-align:center;color:var(--muted)}
@@ -222,7 +223,7 @@ function groupSources(rows) {
     return { ...c, n: c.hit + c.failed, rate: c.hit + c.failed ? 100 * c.hit / (c.hit + c.failed) : null, avg };
   });
   out.sort((a, b) => b.n - a.n || a.source.localeCompare(b.source));
-  return out;
+  return out.filter(s => s.n > 0 || s.open > 0);
 }
 
 function renderKpis(charts, sources) {
@@ -237,8 +238,8 @@ function renderKpis(charts, sources) {
     <div class="kpi"><div class="l">Expectancy</div><div class="v ${expR == null ? "dim" : expR > 0 ? "good" : "bad"}">${expR == null ? "–" : (expR > 0 ? "+" : "") + expR.toFixed(2) + "R"}</div><div class="d">per call at 1R target / 0.5R stop</div></div>
     <div class="kpi"><div class="l">Calls</div><div class="v">${n}</div><div class="d"><span class="good">${hit} hit</span> · <span class="bad">${failed} failed</span> · <span class="dim">${expired} expired</span></div></div>
     <div class="kpi"><div class="l">Open now</div><div class="v">${open}</div><div class="d">across ${charts.length} chart${charts.length === 1 ? "" : "s"}</div></div>
-    <div class="kpi"><div class="l">Best source</div><div class="v" style="font-size:18px">${best ? esc(label(best.source)) : "–"}</div><div class="d">${best ? `<span class="${grade(best.rate, best.n)}">${pct(best.rate)}</span> on ${best.n} calls` : `needs ${MIN_N}+ calls`}</div></div>
-    <div class="kpi"><div class="l">Best chart</div><div class="v" style="font-size:18px">${bestChart ? esc(bestChart.sym) + ' <span class="tf">' + esc(bestChart.tf) + "</span>" : "–"}</div><div class="d">${bestChart ? `<span class="${grade(bestChart.rate, bestChart.n)}">${pct(bestChart.rate)}</span> on ${bestChart.n} calls` : `needs ${MIN_N}+ calls`}</div></div>`;
+    <div class="kpi"><div class="l">Best source</div><div class="v" style="font-size:16px;font-family:var(--sans)">${best ? esc(label(best.source)) : "–"}</div><div class="d">${best ? `<span class="${grade(best.rate, best.n)}">${pct(best.rate)}</span> on ${best.n} calls` : `needs ${MIN_N}+ calls`}</div></div>
+    <div class="kpi"><div class="l">Best chart</div><div class="v" style="font-size:16px;font-family:var(--sans)">${bestChart ? esc(bestChart.sym) + ' <span class="tf">' + esc(bestChart.tf) + "</span>" : "–"}</div><div class="d">${bestChart ? `<span class="${grade(bestChart.rate, bestChart.n)}">${pct(bestChart.rate)}</span> on ${bestChart.n} calls` : `needs ${MIN_N}+ calls`}</div></div>`;
 }
 
 function renderMatrix(charts) {
