@@ -129,6 +129,15 @@ footer{font-size:12px;color:var(--muted);display:flex;justify-content:space-betw
 .trend .col i::after{content:attr(data-v);position:absolute;top:-16px;left:0;right:0;text-align:center;font:600 11px var(--mono);color:var(--ink-2)}
 .trend small{font:10px var(--mono);color:var(--muted);white-space:nowrap}
 .note{font-size:12px;color:var(--muted);margin-top:8px}
+.calib{display:grid;grid-template-columns:minmax(260px,1fr) minmax(0,1.2fr);gap:20px;align-items:start}
+@media (max-width:900px){.calib{grid-template-columns:1fr}}
+.calib svg{width:100%;height:auto;display:block}
+.calib .axis{stroke:var(--line-strong);stroke-width:1}
+.calib .diag{stroke:var(--muted);stroke-dasharray:4 4;stroke-width:1}
+.calib text{font:11px var(--mono);fill:var(--muted)}
+.calib .pt{stroke:var(--bg);stroke-width:1.5}
+.calib .lbl{fill:var(--ink);font:600 11px var(--mono)}
+.pos{color:var(--good)}.neg{color:var(--bad)}
 @media (prefers-reduced-motion:no-preference){.rate .bar i,.spark i{transition:width .5s ease}}
 @media (max-width:640px){.wrap{padding-inline:16px}.kpi .v{font-size:24px}th,td{padding:9px 10px}}
 </style>
@@ -164,6 +173,23 @@ footer{font-size:12px;color:var(--muted);display:flex;justify-content:space-betw
   <section>
     <h2>Per chart <span>every source, with average bars to resolution</span></h2>
     <div class="cards" id="charts"></div>
+  </section>
+
+  <section>
+    <h2>Paper trades in R <span>plans as shown in Telegram, filled at entry, resolved at stop (-1R) or target (+R:R); the scoreboard's hit flag is not used here</span></h2>
+    <div class="kpis" id="rkpis"></div>
+    <div class="two" style="margin-top:12px">
+      <div><h3>By source</h3><div class="card scroll"><table id="rsources"></table></div></div>
+      <div><h3>By market</h3><div class="card scroll"><table id="rmarkets"></table></div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>AI calibration <span>stated confidence vs realised hit rate, dot size = calls</span></h2>
+    <div class="card calib" style="padding:14px">
+      <div id="calibChart"></div>
+      <div class="scroll"><table id="calibTable"></table><div class="note">A well-calibrated model sits on the dashed diagonal: zones it rates 70% should hit about 70% of the time. Points below the line mean over-confidence.</div></div>
+    </div>
   </section>
 
   <section>
@@ -343,7 +369,7 @@ function partsIn(iso) {
   return { hour, wd, utcHour: d.getUTCHours() };
 }
 function parseZones(rows) {
-  return (rows || []).map(r => ({ sym: r[0], tf: r[1], ind: r[2], source: r[3], dir: r[4], kind: r[5], conf: r[6], status: r[7], bars: r[8], created: r[9], resolved: r[10], fam: family(r[3]) }));
+  return (rows || []).map(r => ({ sym: r[0], tf: r[1], ind: r[2], source: r[3], dir: r[4], kind: r[5], conf: r[6], status: r[7], bars: r[8], created: r[9], resolved: r[10], prr: r[11], pstatus: r[12], pr: r[13], presolved: r[14], fam: family(r[3]) }));
 }
 function resolvedIn(zs) {
   const days = period === "last_7d" ? 7 : period === "last_30d" ? 30 : null;
@@ -457,10 +483,70 @@ function renderTz() {
   seg.innerHTML = TZS.map(([k, v]) => `<button role="tab" class="${k === tz ? "on" : ""}" data-k="${k}">${v}</button>`).join("");
   seg.querySelectorAll("button").forEach(b => b.onclick = () => { tz = b.dataset.k; try { localStorage.setItem("ps_detail_tz", tz); } catch (e) {} renderTz(); if (data) renderCuts(); });
 }
+// ---- paper-trade expectancy ----
+function planStats(list) {
+  const t = list.filter(z => z.pstatus === "won" || z.pstatus === "lost");
+  const won = t.filter(z => z.pstatus === "won"), lost = t.filter(z => z.pstatus === "lost");
+  const R = t.reduce((a, z) => a + (z.pr || 0), 0);
+  const open = list.filter(z => z.pstatus === "waiting" || z.pstatus === "filled").length;
+  const avgRR = t.length ? t.reduce((a, z) => a + (z.prr || 0), 0) / t.length : null;
+  return { n: t.length, won: won.length, lost: lost.length, R, exp: t.length ? R / t.length : null, winRate: t.length ? 100 * won.length / t.length : null, avgRR, open };
+}
+const rfmt = v => v == null ? "–" : (v > 0 ? "+" : "") + v.toFixed(2) + "R";
+const rcls = v => v == null ? "dim" : v > 0 ? "pos" : v < 0 ? "neg" : "";
+function planRow(name, st) {
+  return `<tr><td>${name}</td><td class="r num ${rcls(st.exp)}">${rfmt(st.exp)}</td><td class="r num ${rcls(st.R)}">${rfmt(st.R)}</td><td class="r num">${st.n}</td><td class="r num">${st.winRate == null ? "–" : Math.round(st.winRate) + "%"}</td><td class="r num dim">${st.avgRR == null ? "–" : st.avgRR.toFixed(1)}</td><td class="r num dim">${st.open || ""}</td></tr>`;
+}
+const PLAN_HEAD = `<th>Group</th><th class="r">Expectancy</th><th class="r">Total R</th><th class="r">Trades</th><th class="r">Win</th><th class="r">Avg R:R</th><th class="r">Open</th>`;
+function renderExpectancy(zsPeriod) {
+  const list = zsPeriod;
+  const all = planStats(list);
+  document.getElementById("rkpis").innerHTML = `
+    <div class="kpi"><div class="l">Expectancy / trade</div><div class="v ${rcls(all.exp)}">${rfmt(all.exp)}</div><div class="d">${all.n} closed paper trades</div></div>
+    <div class="kpi"><div class="l">Total R</div><div class="v ${rcls(all.R)}">${rfmt(all.R)}</div><div class="d">${all.won} won · ${all.lost} lost · ${all.open} open</div></div>
+    <div class="kpi"><div class="l">Win rate</div><div class="v">${all.winRate == null ? "–" : Math.round(all.winRate) + "%"}</div><div class="d">break-even at ${all.avgRR ? Math.round(100 / (1 + all.avgRR)) + "%" : "–"} for the average R:R</div></div>
+    <div class="kpi"><div class="l">Average R:R shown</div><div class="v">${all.avgRR == null ? "–" : all.avgRR.toFixed(2)}</div><div class="d">target distance / stop distance</div></div>`;
+  const fams = SRC_ORDER.filter(f => list.some(z => z.fam === f));
+  tbl("rsources", PLAN_HEAD, fams.map(f => planRow(esc(FAMILY_LABEL[f]), planStats(list.filter(z => z.fam === f)))).concat(
+    list.some(z => z.source.startsWith("harmonic ")) ? [...new Set(list.filter(z => z.source.startsWith("harmonic ")).map(z => z.source))].sort().map(src => planRow(`<span class="dim">${esc(label(src))}</span>`, planStats(list.filter(z => z.source === src)))) : []));
+  const charts = [...new Set(list.map(z => `${z.sym}|${z.tf}`))].map(k => { const [sym, tf] = k.split("|"); return { k, sym, tf, st: planStats(list.filter(z => z.sym === sym && z.tf === tf)) }; })
+    .filter(c => c.st.n > 0 || c.st.open > 0).sort((a, b) => b.st.n - a.st.n);
+  tbl("rmarkets", PLAN_HEAD, charts.map(c => planRow(`<span class="sym">${esc(c.sym)}</span><span class="tf">${esc(c.tf)}</span>`, c.st)));
+}
+function planPeriod(zs) {
+  const days = period === "last_7d" ? 7 : period === "last_30d" ? 30 : null;
+  const since = days ? Date.now() - days * 86400e3 : -Infinity;
+  return zs.filter(z => z.pstatus && (z.pstatus === "waiting" || z.pstatus === "filled" || (z.presolved ? new Date(z.presolved).getTime() >= since : new Date(z.created).getTime() >= since)));
+}
+
+// ---- AI calibration ----
+function renderCalibration(list) {
+  const ai = list.filter(z => z.source === "ai" && z.conf != null);
+  const B = [[50, 59], [60, 69], [70, 79], [80, 89], [90, 100]];
+  const pts = B.map(([a, b]) => { const sub = ai.filter(z => z.conf >= a && z.conf <= b); const hit = sub.filter(z => z.status === "hit").length; const n = sub.length;
+    return { a, b, n, hit, rate: n ? 100 * hit / n : null, stated: sub.length ? sub.reduce((x, z) => x + z.conf, 0) / sub.length : (a + b) / 2 }; });
+  const W = 360, H = 300, L = 44, R = 12, T = 16, Bm = 36;
+  const x = v => L + (v - 40) / 60 * (W - L - R), y = v => T + (100 - v) / 100 * (H - T - Bm);
+  let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="AI calibration">`;
+  svg += `<line class="axis" x1="${L}" y1="${y(0)}" x2="${W - R}" y2="${y(0)}"/><line class="axis" x1="${L}" y1="${y(0)}" x2="${L}" y2="${y(100)}"/>`;
+  svg += `<line class="diag" x1="${x(40)}" y1="${y(40)}" x2="${x(100)}" y2="${y(100)}"/>`;
+  for (const v of [40, 60, 80, 100]) svg += `<text x="${x(v)}" y="${H - 14}" text-anchor="middle">${v}%</text>`;
+  for (const v of [0, 25, 50, 75, 100]) svg += `<text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${v}</text>`;
+  svg += `<text x="${(L + W - R) / 2}" y="${H - 2}" text-anchor="middle">stated confidence</text>`;
+  svg += `<text transform="translate(12 ${(T + H - Bm) / 2}) rotate(-90)" text-anchor="middle">realised hit rate %</text>`;
+  const maxN = Math.max(1, ...pts.map(p => p.n));
+  for (const p of pts) { if (!p.n) continue; const r = 5 + 14 * Math.sqrt(p.n / maxN); const g = grade(p.rate, p.n);
+    svg += `<circle class="pt" cx="${x(p.stated)}" cy="${y(p.rate)}" r="${r}" fill="var(--${g === "dim" ? "neutral" : g})" opacity="0.9"><title>${p.a}–${p.b}%: ${p.hit}/${p.n} hit</title></circle><text class="lbl" x="${x(p.stated)}" y="${y(p.rate) - r - 4}" text-anchor="middle">${p.n}</text>`; }
+  svg += `</svg>`;
+  document.getElementById("calibChart").innerHTML = ai.length ? svg : `<div class="state">No resolved AI zones in this period.</div>`;
+  tbl("calibTable", `<th>Stated</th><th class="r">Calls</th><th class="r">Realised</th><th class="r">Gap</th>`, pts.filter(p => p.n).map(p => `<tr><td>${p.a}–${p.b}%</td><td class="r num">${p.n}</td><td class="r num ${grade(p.rate, p.n)}">${Math.round(p.rate)}%</td><td class="r num ${p.rate - p.stated >= 0 ? "pos" : "neg"}">${(p.rate - p.stated >= 0 ? "+" : "") + Math.round(p.rate - p.stated)}</td></tr>`));
+}
+
 let allZones = [];
 function renderCuts() {
   const list = resolvedIn(allZones);
   renderHours(list); renderSessions(list); renderWeekdays(list); renderSides(list); renderConfidence(list); renderDuration(list); renderPlatform(list);
+  renderExpectancy(planPeriod(allZones)); renderCalibration(list);
 }
 
 function render() {
