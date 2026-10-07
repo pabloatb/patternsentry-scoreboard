@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>PatternSentry · detailed track record</title>
+<style>
+:root{--ink:#1f2937;--muted:#6b7280;--line:#e5e7eb;--bg:#ffffff;--accent:#2f6fed;--good:#16a34a;--mid:#d97706;--bad:#dc2626;--dim:#9ca3af;--card:#f8fafc}
+@media(prefers-color-scheme:dark){:root{--ink:#e5e7eb;--muted:#9ca3af;--line:#374151;--bg:#0f1115;--card:#161a22;--dim:#6b7280}}
+*{box-sizing:border-box}
+body{margin:0;padding:24px 16px 48px;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;max-width:1000px;margin-inline:auto}
+h1{font-size:22px;margin:0 0 4px}
+h2{font-size:16px;margin:28px 0 8px;display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap}
+h3{font-size:14px;margin:18px 0 6px;color:var(--muted);font-weight:600}
+.muted{color:var(--muted);font-weight:400}
+table{width:100%;border-collapse:collapse}
+th,td{padding:7px 6px;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle}
+th{color:var(--muted);font-weight:500;font-size:13px}
+.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.bar{display:inline-block;height:8px;border-radius:2px;vertical-align:middle;margin-right:8px;background:var(--dim)}
+.good{color:var(--good)}.mid{color:var(--mid)}.bad{color:var(--bad)}.dim{color:var(--dim)}
+.b-good{background:var(--good)}.b-mid{background:var(--mid)}.b-bad{background:var(--bad)}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin:12px 0}
+.tabs button{border:1px solid var(--line);background:var(--card);color:var(--ink);padding:6px 12px;border-radius:6px;cursor:pointer;font:inherit}
+.tabs button.on{border-color:var(--accent);color:var(--accent);font-weight:600}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:10px 0}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px}
+details summary{cursor:pointer;font-weight:600}
+.pill{display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;border:1px solid var(--line);color:var(--muted);margin-left:6px}
+.err{color:var(--bad)}
+a{color:var(--accent)}
+</style>
+</head>
+<body>
+<h1>PatternSentry · detailed track record</h1>
+<div class="muted">Per market and timeframe, per signal source. Live calls only; the backtest is excluded. <span id="generated"></span></div>
+<div class="tabs" id="tabs"></div>
+<div id="app"><p class="muted">Loading…</p></div>
+<h2>Recent resolved calls <span class="muted" id="recentCount"></span></h2>
+<div id="recent"></div>
+<p class="muted" style="margin-top:28px">Private view: the link carries an access token. Scores describe past price reactions at detected levels and are not a prediction or a recommendation.</p>
+<script>
+const BASE = "https://gcznaaffmflukphvkusk.supabase.co/functions/v1/scoreboard";
+const params = new URLSearchParams(location.search);
+const token = params.get("token") || location.hash.replace(/^#/, "");
+const esc = s => String(s ?? "").replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+const cls = (p, n) => p == null ? "dim" : n < 5 ? "dim" : p >= 55 ? "good" : p >= 45 ? "mid" : "bad";
+const pct = (p) => p == null ? "–" : Math.round(p) + "%";
+const bar = (p, n) => `<span class="bar ${p == null || n < 5 ? "" : "b-" + cls(p, n)}" style="width:${Math.max(2, Math.round((p || 0) * 0.8))}px"></span>`;
+const label = (src) => src.startsWith("waves abc") ? "Elliott ABC target" + src.slice(9) : src.startsWith("waves") ? "Elliott wave-5" + src.slice(5) : src.startsWith("harmonic ") ? "Harmonic " + src.slice(9) : src === "ai" ? "AI read" : src.charAt(0).toUpperCase() + src.slice(1);
+
+let data = null, period = "last_30d";
+
+function agg(rows) {
+  // group by chart (sym tf)
+  const m = new Map();
+  for (const r of rows) {
+    const k = `${r.sym} ${r.tf}`;
+    const c = m.get(k) || { chart: k, sym: r.sym, tf: r.tf, hit: 0, failed: 0, expired: 0, open: 0, sources: [] };
+    c.hit += r.hit; c.failed += r.failed; c.expired += r.expired; c.open += r.open; c.sources.push(r);
+    m.set(k, c);
+  }
+  const out = [...m.values()].map(c => ({ ...c, n: c.hit + c.failed, rate: c.hit + c.failed ? 100 * c.hit / (c.hit + c.failed) : null }));
+  out.sort((a, b) => b.n - a.n || a.chart.localeCompare(b.chart));
+  return out;
+}
+
+function bySource(rows) {
+  const m = new Map();
+  for (const r of rows) {
+    const c = m.get(r.source) || { source: r.source, hit: 0, failed: 0, open: 0, charts: new Set() };
+    c.hit += r.hit; c.failed += r.failed; c.open += r.open; if (r.hit + r.failed) c.charts.add(`${r.sym} ${r.tf}`);
+    m.set(r.source, c);
+  }
+  const out = [...m.values()].map(c => ({ ...c, n: c.hit + c.failed, rate: c.hit + c.failed ? 100 * c.hit / (c.hit + c.failed) : null }));
+  out.sort((a, b) => b.n - a.n);
+  return out;
+}
+
+function render() {
+  const rows = data[period] || [];
+  const charts = agg(rows);
+  const srcs = bySource(rows);
+  const tot = charts.reduce((a, c) => ({ hit: a.hit + c.hit, failed: a.failed + c.failed, open: a.open + c.open }), { hit: 0, failed: 0, open: 0 });
+  const totN = tot.hit + tot.failed;
+  let html = `<div class="card"><b>${totN}</b> resolved calls · <b class="${cls(totN ? 100 * tot.hit / totN : null, totN)}">${pct(totN ? 100 * tot.hit / totN : null)}</b> hit rate · ${tot.open} open · ${charts.length} charts</div>`;
+
+  html += `<h2>By market and timeframe</h2><table><thead><tr><th>Chart</th><th>Hit rate</th><th class="n">Calls</th><th class="n">Hit</th><th class="n">Failed</th><th class="n">Expired</th><th class="n">Open</th><th>Best source (n≥5)</th></tr></thead><tbody>`;
+  for (const c of charts) {
+    const best = c.sources.filter(s => s.hit + s.failed >= 5).sort((a, b) => (b.hit_rate ?? -1) - (a.hit_rate ?? -1))[0];
+    html += `<tr><td><b>${esc(c.sym)}</b> <span class="pill">${esc(c.tf)}</span></td><td>${bar(c.rate, c.n)}<span class="${cls(c.rate, c.n)}">${pct(c.rate)}</span></td><td class="n">${c.n}</td><td class="n">${c.hit}</td><td class="n">${c.failed}</td><td class="n">${c.expired}</td><td class="n">${c.open}</td><td class="muted">${best ? esc(label(best.source)) + " " + pct(best.hit_rate) + " (n=" + (best.hit + best.failed) + ")" : "–"}</td></tr>`;
+  }
+  html += `</tbody></table>`;
+
+  html += `<h2>By source, all charts</h2><table><thead><tr><th>Source</th><th>Hit rate</th><th class="n">Calls</th><th class="n">Hit</th><th class="n">Failed</th><th class="n">Open</th><th class="n">Charts</th></tr></thead><tbody>`;
+  for (const s of srcs) html += `<tr><td>${esc(label(s.source))}</td><td>${bar(s.rate, s.n)}<span class="${cls(s.rate, s.n)}">${pct(s.rate)}</span></td><td class="n">${s.n}</td><td class="n">${s.hit}</td><td class="n">${s.failed}</td><td class="n">${s.open}</td><td class="n">${s.charts.size}</td></tr>`;
+  html += `</tbody></table>`;
+
+  html += `<h2>Breakdown per chart</h2><div class="grid">`;
+  for (const c of charts) {
+    const rowsHtml = c.sources.filter(s => s.hit + s.failed + s.open > 0).sort((a, b) => (b.hit + b.failed) - (a.hit + a.failed))
+      .map(s => `<tr><td>${esc(label(s.source))}</td><td>${bar(s.hit_rate, s.hit + s.failed)}<span class="${cls(s.hit_rate, s.hit + s.failed)}">${pct(s.hit_rate)}</span></td><td class="n">${s.hit + s.failed}</td><td class="n">${s.open}</td><td class="n muted">${s.avg_bars ?? "–"}</td></tr>`).join("");
+    html += `<div class="card"><details ${charts.length <= 4 ? "open" : ""}><summary>${esc(c.sym)} ${esc(c.tf)} <span class="muted">· ${c.n} resolved · ${pct(c.rate)}</span></summary><table><thead><tr><th>Source</th><th>Hit rate</th><th class="n">Calls</th><th class="n">Open</th><th class="n">Avg bars</th></tr></thead><tbody>${rowsHtml || `<tr><td colspan="5" class="muted">nothing resolved in this period</td></tr>`}</tbody></table></details></div>`;
+  }
+  html += `</div>`;
+  document.getElementById("app").innerHTML = html;
+
+  const rec = data.recent || [];
+  document.getElementById("recentCount").textContent = `· last ${rec.length}`;
+  document.getElementById("recent").innerHTML = rec.length ? `<table><thead><tr><th>Resolved</th><th>Chart</th><th>Source</th><th>Side</th><th class="n">Zone</th><th>Outcome</th><th class="n">Bars</th></tr></thead><tbody>` +
+    rec.map(z => `<tr><td class="muted">${esc((z.resolved_t || "").slice(0, 16).replace("T", " "))}</td><td>${esc(z.sym)} <span class="pill">${esc(z.tf)}</span></td><td>${esc(label(z.source))}</td><td>${z.dir === "long" ? "▲ long" : "▼ short"}${z.kind === "target" ? ' <span class="pill">target</span>' : ""}</td><td class="n">${z.lo} – ${z.hi}</td><td class="${z.status === "hit" ? "good" : z.status === "failed" ? "bad" : "dim"}">${esc(z.status)}</td><td class="n">${z.age_bars}</td></tr>`).join("") + `</tbody></table>` : `<p class="muted">nothing resolved yet</p>`;
+}
+
+function tabs() {
+  const t = document.getElementById("tabs");
+  t.innerHTML = [["last_7d", "Last 7 days"], ["last_30d", "Last 30 days"], ["all_time", "All time"]]
+    .map(([k, v]) => `<button class="${k === period ? "on" : ""}" data-k="${k}">${v}</button>`).join("");
+  t.querySelectorAll("button").forEach(b => b.onclick = () => { period = b.dataset.k; tabs(); render(); });
+}
+
+if (!token) {
+  document.getElementById("app").innerHTML = `<p class="err">Missing access token. Open this page with the link you were given.</p>`;
+} else {
+  fetch(`${BASE}?view=detail&token=${encodeURIComponent(token)}`, { cache: "no-store" }).then(r => {
+    if (r.status === 403) throw new Error("This link is not valid.");
+    return r.json();
+  }).then(d => { data = d; document.getElementById("generated").textContent = "Generated " + d.generated + "."; tabs(); render(); })
+    .catch(e => { document.getElementById("app").innerHTML = `<p class="err">${esc(e.message)}</p>`; });
+}
+</script>
+</body>
+</html>
