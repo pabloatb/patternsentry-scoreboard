@@ -116,6 +116,19 @@ td.r,th.r{text-align:right}
 .state{padding:40px;text-align:center;color:var(--muted)}
 .state.err{color:var(--bad)}
 footer{font-size:12px;color:var(--muted);display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:8px}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px}
+@media (max-width:1000px){.three{grid-template-columns:1fr}}
+.matrix.hours .cell{min-height:36px;gap:0}
+.matrix.hours .cell b{font-size:12px}.matrix.hours .cell small{font-size:10px}
+.matrix.hours .hd{text-align:center;padding:4px 2px}
+.seg.small button{padding:4px 10px;font-size:12px}
+.trend{display:flex;gap:6px;align-items:stretch;height:170px;padding-top:18px}
+.trend .wk{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:4px;min-width:0}
+.trend .col{width:100%;flex:1;display:flex;align-items:flex-end;background:linear-gradient(to top,var(--line) 1px,transparent 1px) bottom/100% 1px no-repeat}
+.trend .col i{display:block;width:100%;border-radius:3px 3px 0 0;position:relative}
+.trend .col i::after{content:attr(data-v);position:absolute;top:-16px;left:0;right:0;text-align:center;font:600 11px var(--mono);color:var(--ink-2)}
+.trend small{font:10px var(--mono);color:var(--muted);white-space:nowrap}
+.note{font-size:12px;color:var(--muted);margin-top:8px}
 @media (prefers-reduced-motion:no-preference){.rate .bar i,.spark i{transition:width .5s ease}}
 @media (max-width:640px){.wrap{padding-inline:16px}.kpi .v{font-size:24px}th,td{padding:9px 10px}}
 </style>
@@ -151,6 +164,30 @@ footer{font-size:12px;color:var(--muted);display:flex;justify-content:space-betw
   <section>
     <h2>Per chart <span>every source, with average bars to resolution</span></h2>
     <div class="cards" id="charts"></div>
+  </section>
+
+  <section>
+    <h2>Hit rate by time of day <span class="seg small" id="tzseg" role="tablist"></span></h2>
+    <div class="card" style="padding:14px"><div class="scroll"><div class="matrix hours" id="hours"></div></div>
+      <div class="legend"><span><i class="bg-good"></i>&ge; 55%</span><span><i class="bg-mid"></i>45&ndash;55%</span><span><i class="bg-bad"></i>&lt; 45%</span><span><i style="border:1px dashed var(--line-strong)"></i>fewer than 5 calls</span><span>hour the zone was created</span></div>
+    </div>
+  </section>
+
+  <section class="three">
+    <div><h2>By session <span>UTC</span></h2><div class="card scroll"><table id="sessions"></table></div></div>
+    <div><h2>By weekday</h2><div class="card scroll"><table id="weekdays"></table></div></div>
+    <div><h2>Long vs short</h2><div class="card scroll"><table id="sides"></table></div></div>
+  </section>
+
+  <section class="three">
+    <div><h2>By confidence <span>AI % / confluence factors</span></h2><div class="card scroll"><table id="confidence"></table></div></div>
+    <div><h2>Bars to resolution <span>median</span></h2><div class="card scroll"><table id="duration"></table></div></div>
+    <div><h2>By platform</h2><div class="card scroll"><table id="platform"></table></div></div>
+  </section>
+
+  <section>
+    <h2>Weekly trend <span>hit rate per ISO week, bar height = calls, last 16 weeks regardless of the period above</span></h2>
+    <div class="card" style="padding:14px"><div class="trend" id="trend"></div><div class="note" id="trendNote"></div></div>
   </section>
 
   <section>
@@ -293,23 +330,157 @@ function renderRecent(rec) {
     rec.map(z => `<tr><td class="num dim">${esc((z.resolved_t || "").slice(0, 16).replace("T", " "))}</td><td><span class="sym">${esc(z.sym)}</span><span class="tf">${esc(z.tf)}</span></td><td>${esc(label(z.source))}</td><td><span class="chip ${z.dir}">${z.dir}</span>${z.kind === "target" ? ' <span class="chip target">target</span>' : ""}</td><td class="r num">${fmt(z.lo)} – ${fmt(z.hi)}</td><td><span class="chip ${z.status}">${esc(z.status)}</span></td><td class="r num">${z.age_bars}</td></tr>`).join("") + `</tbody>`;
 }
 
+// ---- call-level cuts (hour, session, weekday, side, confidence, duration, platform, trend) ----
+let tz = "UTC";
+try { tz = localStorage.getItem("ps_detail_tz") || tz; } catch (e) {}
+const TZS = [["UTC", "UTC"], ["America/New_York", "New York"], ["Europe/London", "London"], ["local", "Local"]];
+const tzName = () => tz === "local" ? Intl.DateTimeFormat().resolvedOptions().timeZone : tz;
+function partsIn(iso) {
+  const d = new Date(iso);
+  const f = new Intl.DateTimeFormat("en-US", { timeZone: tzName(), hour: "2-digit", hour12: false, weekday: "short" }).formatToParts(d);
+  const hour = Number(f.find(x => x.type === "hour").value) % 24;
+  const wd = f.find(x => x.type === "weekday").value;
+  return { hour, wd, utcHour: d.getUTCHours() };
+}
+function parseZones(rows) {
+  return (rows || []).map(r => ({ sym: r[0], tf: r[1], ind: r[2], source: r[3], dir: r[4], kind: r[5], conf: r[6], status: r[7], bars: r[8], created: r[9], resolved: r[10], fam: family(r[3]) }));
+}
+function resolvedIn(zs) {
+  const days = period === "last_7d" ? 7 : period === "last_30d" ? 30 : null;
+  const since = days ? Date.now() - days * 86400e3 : -Infinity;
+  return zs.filter(z => (z.status === "hit" || z.status === "failed") && z.resolved && new Date(z.resolved).getTime() >= since);
+}
+function tally(list, keyFn, keys) {
+  const m = new Map();
+  for (const k of keys || []) m.set(k, { k, hit: 0, failed: 0 });
+  for (const z of list) {
+    const k = keyFn(z); if (k == null) continue;
+    const c = m.get(k) || { k, hit: 0, failed: 0 }; if (z.status === "hit") c.hit++; else c.failed++; m.set(k, c);
+  }
+  return [...m.values()].map(c => ({ ...c, n: c.hit + c.failed, rate: c.hit + c.failed ? 100 * c.hit / (c.hit + c.failed) : null }));
+}
+const tbl = (id, head, rows) => { document.getElementById(id).innerHTML = rows.length ? `<thead><tr>${head}</tr></thead><tbody>${rows.join("")}</tbody>` : `<tr><td class="state">No resolved calls in this period</td></tr>`; };
+const row3 = (name, c) => `<tr><td>${name}</td><td>${rateCell(c.rate, c.n)}</td><td class="r num">${c.n}</td></tr>`;
+const HEAD3 = `<th>Group</th><th>Hit rate</th><th class="r">Calls</th>`;
+
+function renderHours(list) {
+  const el = document.getElementById("hours");
+  const fams = SRC_ORDER.filter(f => list.some(z => z.fam === f));
+  if (!list.length) { el.innerHTML = `<div class="state">No resolved calls in this period.</div>`; return; }
+  const cells = new Map();
+  for (const z of list) {
+    const h = partsIn(z.created).hour;
+    for (const key of [`all|${h}`, `${z.fam}|${h}`]) {
+      const c = cells.get(key) || { hit: 0, failed: 0 }; if (z.status === "hit") c.hit++; else c.failed++; cells.set(key, c);
+    }
+  }
+  el.style.gridTemplateColumns = `minmax(120px,auto) repeat(24, minmax(34px,1fr))`;
+  let html = `<div class="hd" style="text-align:left">Source · hour (${esc(tz === "local" ? tzName() : TZS.find(t => t[0] === tz)[1])})</div>` + Array.from({ length: 24 }, (_, h) => `<div class="hd">${String(h).padStart(2, "0")}</div>`).join("");
+  for (const f of ["all", ...fams]) {
+    html += `<div class="rh"><span class="sym">${f === "all" ? "All sources" : esc(FAMILY_LABEL[f])}</span></div>`;
+    for (let h = 0; h < 24; h++) {
+      const c = cells.get(`${f}|${h}`);
+      if (!c) { html += `<div class="cell empty">·</div>`; continue; }
+      const n = c.hit + c.failed, p = 100 * c.hit / n, g = grade(p, n);
+      html += `<div class="cell ${n < MIN_N ? "small" : ""}" style="background:${g === "dim" ? "var(--surface-2)" : `var(--${g}-bg)`}" title="${String(h).padStart(2, "0")}:00 · ${c.hit} hit / ${c.failed} failed"><b class="${g}">${Math.round(p)}%</b><small>${n}</small></div>`;
+    }
+  }
+  el.innerHTML = html;
+}
+function renderSessions(list) {
+  const SES = [["Asia", 0, 7], ["London", 7, 13], ["New York", 13, 21], ["Late US", 21, 24]];
+  const sesOf = h => SES.find(([, a, b]) => h >= a && h < b)[0];
+  const fams = SRC_ORDER.filter(f => list.some(z => z.fam === f));
+  const rows = [];
+  for (const c of tally(list, z => sesOf(z.utcHour ?? partsIn(z.created).utcHour), SES.map(x => x[0]))) rows.push(row3(`<b>${esc(c.k)}</b> <span class="dim">${SES.find(x => x[0] === c.k)[1]}–${SES.find(x => x[0] === c.k)[2]}h</span>`, c));
+  for (const f of fams) for (const c of tally(list.filter(z => z.fam === f), z => sesOf(partsIn(z.created).utcHour))) if (c.n >= MIN_N) rows.push(row3(`<span class="dim">${esc(FAMILY_LABEL[f])} · ${esc(c.k)}</span>`, c));
+  tbl("sessions", HEAD3, rows);
+}
+function renderWeekdays(list) {
+  const WD = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  const rows = tally(list, z => partsIn(z.created).wd, WD).filter(c => c.n > 0).sort((a, b) => WD.indexOf(a.k) - WD.indexOf(b.k)).map(c => row3(c.k, c));
+  tbl("weekdays", HEAD3, rows);
+}
+function renderSides(list) {
+  const fams = SRC_ORDER.filter(f => list.some(z => z.fam === f));
+  const rows = [];
+  for (const f of ["all", ...fams]) {
+    const sub = f === "all" ? list : list.filter(z => z.fam === f);
+    for (const c of tally(sub, z => z.dir, ["long", "short"])) if (c.n) rows.push(row3(`${f === "all" ? "All" : esc(FAMILY_LABEL[f])} · <span class="chip ${c.k}">${c.k}</span>`, c));
+  }
+  tbl("sides", HEAD3, rows);
+}
+function renderConfidence(list) {
+  const rows = [];
+  const ai = list.filter(z => z.source === "ai");
+  for (const c of tally(ai, z => z.conf == null ? null : z.conf >= 80 ? "AI 80%+" : z.conf >= 70 ? "AI 70–79%" : z.conf >= 60 ? "AI 60–69%" : "AI < 60%", ["AI 80%+", "AI 70–79%", "AI 60–69%", "AI < 60%"])) if (c.n) rows.push(row3(c.k, c));
+  const cf = list.filter(z => z.source === "confluence");
+  for (const c of tally(cf, z => z.conf == null ? null : z.conf >= 4 ? "Confluence x4+" : `Confluence x${Math.round(z.conf)}`, ["Confluence x4+", "Confluence x3", "Confluence x2"])) if (c.n) rows.push(row3(c.k, c));
+  tbl("confidence", HEAD3, rows);
+}
+const median = a => { if (!a.length) return null; const s = [...a].sort((x, y) => x - y); const m = Math.floor(s.length / 2); return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+function renderDuration(list) {
+  const fams = SRC_ORDER.filter(f => list.some(z => z.fam === f));
+  const rows = [];
+  for (const f of ["all", ...fams]) {
+    const sub = f === "all" ? list : list.filter(z => z.fam === f);
+    const h = median(sub.filter(z => z.status === "hit").map(z => z.bars)), fl = median(sub.filter(z => z.status === "failed").map(z => z.bars));
+    rows.push(`<tr><td>${f === "all" ? "All" : esc(FAMILY_LABEL[f])}</td><td class="r num good">${h == null ? "–" : h}</td><td class="r num bad">${fl == null ? "–" : fl}</td><td class="r num">${sub.length}</td></tr>`);
+  }
+  tbl("duration", `<th>Source</th><th class="r">Hits</th><th class="r">Fails</th><th class="r">Calls</th>`, rows);
+}
+function renderPlatform(list) {
+  const PL = { structures: "TradingView · Structures", harmonics: "TradingView · Harmonics", elliott: "TradingView · Elliott", mt5: "MetaTrader 5", ai: "AI (server)" };
+  const rows = tally(list, z => PL[z.ind] || z.ind).sort((a, b) => b.n - a.n).map(c => row3(esc(c.k), c));
+  tbl("platform", HEAD3, rows);
+}
+function isoWeek(d) {
+  const t = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  const day = t.getUTCDay() || 7; t.setUTCDate(t.getUTCDate() + 4 - day);
+  const y = t.getUTCFullYear(), w = Math.ceil(((t - Date.UTC(y, 0, 1)) / 86400e3 + 1) / 7);
+  return `${y}-W${String(w).padStart(2, "0")}`;
+}
+function renderTrend(zs) {
+  const res = zs.filter(z => (z.status === "hit" || z.status === "failed") && z.resolved);
+  const by = new Map();
+  for (const z of res) { const k = isoWeek(new Date(z.resolved)); const c = by.get(k) || { k, hit: 0, failed: 0 }; if (z.status === "hit") c.hit++; else c.failed++; by.set(k, c); }
+  const weeks = [...by.values()].sort((a, b) => a.k.localeCompare(b.k)).slice(-16);
+  const el = document.getElementById("trend");
+  if (!weeks.length) { el.innerHTML = `<div class="state">No resolved calls yet.</div>`; return; }
+  const maxN = Math.max(...weeks.map(w => w.hit + w.failed));
+  el.innerHTML = weeks.map(w => { const n = w.hit + w.failed, p = 100 * w.hit / n, g = grade(p, n);
+    return `<div class="wk" title="${w.k}: ${w.hit} hit / ${w.failed} failed"><div class="col"><i class="bg-${g}" style="height:${Math.max(6, Math.round(100 * n / maxN))}%" data-v="${Math.round(p)}%"></i></div><small>${w.k.slice(5)}</small></div>`; }).join("");
+  document.getElementById("trendNote").textContent = `${res.length} resolved calls across ${weeks.length} week${weeks.length === 1 ? "" : "s"}; label = hit rate, height = number of calls.`;
+}
+function renderTz() {
+  const seg = document.getElementById("tzseg");
+  seg.innerHTML = TZS.map(([k, v]) => `<button role="tab" class="${k === tz ? "on" : ""}" data-k="${k}">${v}</button>`).join("");
+  seg.querySelectorAll("button").forEach(b => b.onclick = () => { tz = b.dataset.k; try { localStorage.setItem("ps_detail_tz", tz); } catch (e) {} renderTz(); if (data) renderCuts(); });
+}
+let allZones = [];
+function renderCuts() {
+  const list = resolvedIn(allZones);
+  renderHours(list); renderSessions(list); renderWeekdays(list); renderSides(list); renderConfidence(list); renderDuration(list); renderPlatform(list);
+}
+
 function render() {
   const rows = data[period] || [];
   const charts = groupCharts(rows), sources = groupSources(rows);
   renderKpis(charts, sources); renderMatrix(charts); renderMarkets(charts); renderSources(sources); renderCharts(charts);
+  renderCuts();
 }
 function renderSeg() {
   const seg = document.getElementById("seg");
   seg.innerHTML = PERIODS.map(([k, v]) => `<button role="tab" aria-selected="${k === period}" class="${k === period ? "on" : ""}" data-k="${k}">${v}</button>`).join("");
   seg.querySelectorAll("button").forEach(b => b.onclick = () => { period = b.dataset.k; try { localStorage.setItem("ps_detail_period", period); } catch (e) {} renderSeg(); if (data) render(); });
 }
-renderSeg();
+renderSeg(); renderTz();
 if (!token) {
   document.querySelector("main").innerHTML = `<div class="state err">This page needs the access link it was shared with.</div>`;
 } else {
   fetch(`${BASE}?view=detail&token=${encodeURIComponent(token)}`, { cache: "no-store" })
     .then(r => { if (r.status === 403) throw new Error("This link is not valid or has been revoked."); if (!r.ok) throw new Error("The scoreboard service answered " + r.status + "."); return r.json(); })
-    .then(d => { data = d; document.getElementById("generated").textContent = "Updated " + d.generated; document.getElementById("scope").textContent = d.live_only ? "Live calls only · backtest excluded" : "Live + simulated"; render(); renderRecent(d.recent || []); })
+    .then(d => { data = d; allZones = parseZones(d.zones); document.getElementById("generated").textContent = "Updated " + d.generated; document.getElementById("scope").textContent = d.live_only ? "Live calls only · backtest excluded" : "Live + simulated"; render(); renderRecent(d.recent || []); renderTrend(allZones); })
     .catch(e => { document.querySelector("main").innerHTML = `<div class="state err">${esc(e.message)}</div>`; });
 }
 </script>
