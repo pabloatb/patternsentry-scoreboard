@@ -27,24 +27,22 @@ a{color:var(--accent)}
 </head>
 <body>
 <h1>PatternSentry · live scoreboard</h1>
-<div class="muted">Every call the indicators make on the author's own charts, scored by fixed rules, never edited. Live calls only; the backtest is not in these numbers. <span id="generated"></span></div>
+<div class="muted">Every call the indicators make on the author's own charts, scored by fixed rules, never edited. Live calls only; the backtest is not in these numbers. Delivered calls only: what the trust filter muted is counted apart. <span id="generated"></span></div>
 <div id="app"><p class="muted">Loading…</p></div>
 <p class="charts" id="charts"></p>
-<div class="rules"><b>Scoring rules.</b> A zone is <i>touched</i> when a bar trades into it; <i>hit</i> on a 1R reaction beyond it (R = zone height, floored at half an average bar), <i>failed</i> on a 0.5R push through it, <i>expired</i> after the age limit and excluded. Target zones (harmonic A-D band, Elliott ABC band) are hit when reached and failed when the stop is taken first; both in one bar counts as failed. A touch bar can only fail, never hit. AI zones are scored with the same rules. <b>Trust filter:</b> each new call is classified from the pooled record of calls of its kind (same source, market, timeframe; wider buckets when thin): trusted when the lower 95% bound is at or above 45%, muted when the upper bound is below 40%, unproven otherwise. Muted calls are drawn but not sent, and still scored here.<br>Scores describe past price reactions at detected levels and are not a prediction or a recommendation. Trading futures and CFDs involves substantial risk of loss.</div>
+<div class="rules"><b>Scoring rules.</b> A zone is <i>touched</i> when a bar trades into it; <i>hit</i> on a 1R reaction beyond it (R = zone height, floored at half an average bar), <i>failed</i> on a 0.5R push through it, <i>expired</i> after the age limit and excluded. Objective zones (harmonic A-D band, Elliott ABC band) are hit when reached and failed when the stop is taken first; both in one bar counts as failed. A touch bar can only fail, never hit. AI zones are scored with the same rules.<br><b>Trust filter.</b> Every new call is classed at birth as <i>trusted</i>, <i>unproven</i> or <i>muted</i> from the pooled record of its source on that chart, market or everywhere (95% Wilson bounds, 30+ resolved calls). Muted calls are not delivered and are not in the tables above; they are counted in the line under each table. AI zones are labelled but always delivered.<br>Scores describe past price reactions at detected levels and are not a prediction or a recommendation. Trading futures and CFDs involves substantial risk of loss.</div>
 <p class="muted">Telegram: @PatternSentryBot · <a id="json" href="#">raw data (JSON)</a></p>
 <script>
 const SRC = "https://gcznaaffmflukphvkusk.supabase.co/functions/v1/scoreboard?format=json";
 document.getElementById("json").href = SRC;
 const esc = s => String(s ?? "").replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
-function trustLine(t) {
-  if (!t) return "";
-  const tr = t.find(r => r.trust === "trusted");
-  const mu = t.find(r => r.trust === "muted");
-  if (!tr && !mu) return "";
-  const f = r => r ? `${r.hit_rate == null ? "–" : Math.round(r.hit_rate) + "%"} of ${r.hit + r.failed}` : "–";
-  return `<div class="muted" style="font-size:13px;margin:6px 0 0">Trust filter: <b>trusted</b> calls ${f(tr)} · <b>muted</b> calls (drawn, not sent) ${f(mu)}</div>`;
+const TRUST_ORDER = ["trusted", "unproven", "muted", "unclassified"];
+function trustLine(trust) {
+  const parts = TRUST_ORDER.map(k => (trust || []).find(t => t.trust === k)).filter(t => t && t.hit + t.failed > 0)
+    .map(t => `${esc(t.trust)} ${t.hit_rate == null ? "–" : Math.round(t.hit_rate) + "%"} of ${t.hit + t.failed}${t.trust === "muted" ? " (not delivered)" : ""}`);
+  return parts.length ? `<div class="muted" style="font-size:13px;margin-top:6px"><b>Trust filter at birth:</b> ${parts.join(" · ")}</div>` : "";
 }
-function section(title, rows, trust) {
+function section(title, rows, muted, trust) {
   const tot = rows.reduce((a, r) => ({ hit: a.hit + r.hit, failed: a.failed + r.failed }), { hit: 0, failed: 0 });
   const n = tot.hit + tot.failed;
   const body = rows.length ? rows.map(r => {
@@ -52,13 +50,16 @@ function section(title, rows, trust) {
     const pct = r.hit_rate == null ? null : Math.round(r.hit_rate);
     return `<tr><td>${esc(r.source)}</td><td class="n"><span class="bar${calls < 10 ? " dim" : ""}" style="width:${pct == null ? 0 : pct * 1.2}px"></span>${pct == null ? "–" : pct + "%"}</td><td class="n">${calls}</td><td class="n">${r.hit}</td><td class="n">${r.failed}</td><td class="n">${r.open}</td></tr>`;
   }).join("") : `<tr><td colspan="6" class="muted">no resolved calls yet</td></tr>`;
-  return `<section><h2><span>${esc(title)}</span><span class="muted">${n} resolved · ${n ? Math.round(100 * tot.hit / n) + "%" : "–"} hit</span></h2>
+  const m = muted ? muted.resolved + muted.open : 0;
+  return `<section><h2><span>${esc(title)}</span><span class="muted">${n} delivered calls resolved · ${n ? Math.round(100 * tot.hit / n) + "%" : "–"} hit</span></h2>
 <table><thead><tr><th>Source</th><th class="n">Hit rate</th><th class="n">Calls</th><th class="n">Hit</th><th class="n">Failed</th><th class="n">Open</th></tr></thead><tbody>${body}</tbody></table>
-<div class="muted" style="font-size:12px;margin-top:4px">lighter bars = fewer than 10 calls</div>${trustLine(trust)}</section>`;
+<div class="muted" style="font-size:12px;margin-top:4px">lighter bars = fewer than 10 calls</div>
+<div class="muted" style="font-size:13px;margin-top:6px">${m} call${m === 1 ? "" : "s"} muted by the trust filter: not delivered, not counted${muted && muted.open ? ` (${muted.open} still open)` : ""}.</div>${trustLine(trust)}</section>`;
 }
 fetch(SRC, { cache: "no-store" }).then(r => r.json()).then(d => {
   document.getElementById("generated").textContent = "Generated " + d.generated + ".";
-  document.getElementById("app").innerHTML = section("Last 7 days", d.last_7d, d.trust && d.trust.last_7d) + section("Last 30 days", d.last_30d, d.trust && d.trust.last_30d) + section("All time", d.all_time, d.trust && d.trust.all_time);
+  const mu = d.muted || {}, tr = d.trust || {};
+  document.getElementById("app").innerHTML = section("Last 7 days", d.last_7d, mu.last_7d, tr.last_7d) + section("Last 30 days", d.last_30d, mu.last_30d, tr.last_30d) + section("All time", d.all_time, mu.all_time, tr.all_time);
   document.getElementById("charts").innerHTML = "<b>Charts in the record:</b> " + (d.charts.length ? d.charts.map(c => esc(c.chart)).join(", ") : "none yet");
 }).catch(e => { document.getElementById("app").innerHTML = `<p class="err">Could not load the scoreboard (${esc(e.message)}). Try again in a minute.</p>`; });
 </script>

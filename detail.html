@@ -177,7 +177,7 @@ footer{font-size:12px;color:var(--muted);display:flex;justify-content:space-betw
   </section>
 
   <section>
-    <h2>Paper trades in R <span>research only, not shown to users: entry at zone mid, stop one average bar past the edge, target at the next structure; filled at entry, resolved at stop (-1R) or target (+R:R)</span></h2>
+    <h2>Paper trades in R <span>the plan users see in Telegram and MT5, frozen when the zone is born: entry at zone mid, stop one average bar past the edge, target at the next structure; filled at entry, resolved at stop (-1R) or target (+R:R) · <label><input type="checkbox" id="pv1"> include v1 plans (quarter-bar stop, before 2026-10-09)</label></span></h2>
     <div class="kpis" id="rkpis"></div>
     <div class="two" style="margin-top:12px">
       <div><h3>By source</h3><div class="card scroll"><table id="rsources"></table></div></div>
@@ -213,7 +213,7 @@ footer{font-size:12px;color:var(--muted);display:flex;justify-content:space-betw
   </section>
 
   <section class="three">
-    <div><h2>Trust filter <span>what the filter said at birth</span></h2><div class="card scroll"><table id="trust"></table><div class="note">trusted = lower 95% bound of its bucket ≥ 45%; muted = upper bound &lt; 40% (drawn, not posted); unproven = not enough evidence yet. Calls born before the filter are unclassified.</div></div></div>
+    <div><h2>Trust filter <span>what the filter said at birth</span></h2><div class="card scroll"><table id="trust"></table><div class="note">trusted = lower 95% bound of the deciding bucket ≥ 45%; muted = upper bound &lt; 40% (drawn, not posted, not in the public scoreboard; AI zones are labelled but always posted); unproven = no bucket of the source has 30 resolved calls. Calls born before the filter are unclassified.</div></div></div>
     <div><h2>Deciding bucket <span>how narrow the evidence was</span></h2><div class="card scroll"><table id="tlevel"></table></div></div>
     <div><h2>Muted share <span>of calls born in the period</span></h2><div class="card scroll"><table id="tshare"></table></div></div>
   </section>
@@ -229,7 +229,7 @@ footer{font-size:12px;color:var(--muted);display:flex;justify-content:space-betw
   </section>
 
   <section class="rules" id="rules">
-    <b>How a call is scored.</b> A zone is <b>touched</b> when a bar trades into it. It is a <b>hit</b> when price then reacts 1R beyond the zone (R = zone height, floored at half an average bar) and a <b>fail</b> when price pushes 0.5R through it; whichever comes first. The touch bar itself can only fail. Zones older than the age limit <b>expire</b> and are excluded from the hit rate. Target zones (harmonic A-D band, Elliott ABC band) are hit when reached and failed when the stop is taken first. AI zones follow the same rules.
+    <b>How a call is scored.</b> A zone is <b>touched</b> when a bar trades into it. It is a <b>hit</b> when price then reacts 1R beyond the zone (R = zone height, floored at half an average bar) and a <b>fail</b> when price pushes 0.5R through it; whichever comes first. The touch bar itself can only fail. Zones older than the age limit <b>expire</b> and are excluded from the hit rate. Objective zones (harmonic A-D band, Elliott ABC band) are hit when reached and failed when the stop is taken first. AI zones follow the same rules. This private view counts every call, muted ones included; the public scoreboard counts delivered calls only.
     <br><span class="dim">Scores describe past price reactions at detected levels. They are not a prediction or a recommendation. Trading futures, forex and CFDs involves substantial risk of loss.</span>
   </section>
 
@@ -253,9 +253,9 @@ function family(src) {
   if (src.startsWith("harmonic")) return "harmonic";
   return src;
 }
-const FAMILY_LABEL = { confluence: "Confluence", divergence: "Divergence", waves: "Elliott wave 5", "waves abc": "Elliott ABC target", harmonic: "Harmonics", ai: "AI reads" };
+const FAMILY_LABEL = { confluence: "Confluence", divergence: "Divergence", waves: "Elliott wave 5", "waves abc": "Elliott ABC objective", harmonic: "Harmonics", ai: "AI reads" };
 function label(src) {
-  if (src.startsWith("waves abc ")) return "ABC target · " + src.slice(10);
+  if (src.startsWith("waves abc ")) return "ABC objective · " + src.slice(10);
   if (src.startsWith("waves ")) return "Wave 5 · " + src.slice(6);
   if (src.startsWith("harmonic ")) return "Harmonic " + src.slice(9).replace(/\b\w/g, c => c.toUpperCase());
   if (src === "ai") return "AI read";
@@ -359,8 +359,9 @@ function renderRecent(rec) {
   const t = document.getElementById("recent");
   document.getElementById("recentNote").textContent = rec.length ? `newest ${rec.length}` : "";
   if (!rec.length) { t.innerHTML = `<tr><td class="state">Nothing resolved yet</td></tr>`; return; }
-  t.innerHTML = `<thead><tr><th>Resolved (UTC)</th><th>Chart</th><th>Source</th><th>Side</th><th class="r">Zone</th><th>Outcome</th><th class="r">Bars</th></tr></thead><tbody>` +
-    rec.map(z => `<tr><td class="num dim">${esc((z.resolved_t || "").slice(0, 16).replace("T", " "))}</td><td><span class="sym">${esc(z.sym)}</span><span class="tf">${esc(z.tf)}</span></td><td>${esc(label(z.source))}</td><td><span class="chip ${z.dir}">${z.dir}</span>${z.kind === "target" ? ' <span class="chip target">target</span>' : ""}</td><td class="r num">${fmt(z.lo)} – ${fmt(z.hi)}</td><td><span class="chip ${z.status}">${esc(z.status)}</span></td><td class="r num">${z.age_bars}</td></tr>`).join("") + `</tbody>`;
+  const when = s => esc((s || "").slice(0, 16).replace("T", " "));
+  t.innerHTML = `<thead><tr><th>Called at (UTC)</th><th>Resolved at (UTC)</th><th>Chart</th><th>Source</th><th>Side</th><th class="r">Zone</th><th>Outcome</th><th class="r">Bars</th></tr></thead><tbody>` +
+    rec.map(z => `<tr><td class="num dim">${when(z.created_t)}</td><td class="num dim">${when(z.resolved_t)}</td><td><span class="sym">${esc(z.sym)}</span><span class="tf">${esc(z.tf)}</span></td><td>${esc(label(z.source))}</td><td><span class="chip ${z.dir}">${z.dir}</span>${z.kind === "target" ? ' <span class="chip target">objective</span>' : ""}</td><td class="r num">${fmt(z.lo)} – ${fmt(z.hi)}</td><td><span class="chip ${z.status}">${esc(z.status)}</span></td><td class="r num">${z.age_bars}</td></tr>`).join("") + `</tbody>`;
 }
 
 // ---- call-level cuts (hour, session, weekday, side, confidence, duration, platform, trend) ----
@@ -536,24 +537,28 @@ function renderExpectancy(zsPeriod) {
     .filter(c => c.st.n > 0 || c.st.open > 0).sort((a, b) => b.st.n - a.st.n);
   tbl("rmarkets", PLAN_HEAD, charts.map(c => planRow(`<span class="sym">${esc(c.sym)}</span><span class="tf">${esc(c.tf)}</span>`, c.st)));
 }
+// Plan version 2 (one-average-bar stop, the geometry users see) by default; v1 rows only when asked.
+let includeV1 = false;
+try { includeV1 = localStorage.getItem("ps_detail_pv1") === "1"; } catch (e) {}
 function planPeriod(zs) {
   const days = period === "last_7d" ? 7 : period === "last_30d" ? 30 : null;
   const since = days ? Date.now() - days * 86400e3 : -Infinity;
-  return zs.filter(z => z.pstatus && (z.pstatus === "waiting" || z.pstatus === "filled" || (z.presolved ? new Date(z.presolved).getTime() >= since : new Date(z.created).getTime() >= since)));
+  return zs.filter(z => z.pstatus && (includeV1 || z.pv === 2) && (z.pstatus === "waiting" || z.pstatus === "filled" || (z.presolved ? new Date(z.presolved).getTime() >= since : new Date(z.created).getTime() >= since)));
 }
 
 // ---- AI calibration ----
 function renderCalibration(list) {
   const ai = list.filter(z => z.source === "ai" && z.conf != null);
-  const B = [[50, 59], [60, 69], [70, 79], [80, 89], [90, 100]];
+  // Axis from 30%: the model is told there is no confidence floor, so 30-49% zones are real data.
+  const B = [[30, 39], [40, 49], [50, 59], [60, 69], [70, 79], [80, 89], [90, 100]];
   const pts = B.map(([a, b]) => { const sub = ai.filter(z => z.conf >= a && z.conf <= b); const hit = sub.filter(z => z.status === "hit").length; const n = sub.length;
     return { a, b, n, hit, rate: n ? 100 * hit / n : null, stated: sub.length ? sub.reduce((x, z) => x + z.conf, 0) / sub.length : (a + b) / 2 }; });
   const W = 360, H = 300, L = 44, R = 12, T = 16, Bm = 36;
-  const x = v => L + (v - 40) / 60 * (W - L - R), y = v => T + (100 - v) / 100 * (H - T - Bm);
+  const x = v => L + (Math.max(30, v) - 30) / 70 * (W - L - R), y = v => T + (100 - v) / 100 * (H - T - Bm);
   let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="AI calibration">`;
   svg += `<line class="axis" x1="${L}" y1="${y(0)}" x2="${W - R}" y2="${y(0)}"/><line class="axis" x1="${L}" y1="${y(0)}" x2="${L}" y2="${y(100)}"/>`;
-  svg += `<line class="diag" x1="${x(40)}" y1="${y(40)}" x2="${x(100)}" y2="${y(100)}"/>`;
-  for (const v of [40, 60, 80, 100]) svg += `<text x="${x(v)}" y="${H - 14}" text-anchor="middle">${v}%</text>`;
+  svg += `<line class="diag" x1="${x(30)}" y1="${y(30)}" x2="${x(100)}" y2="${y(100)}"/>`;
+  for (const v of [30, 40, 50, 60, 70, 80, 90, 100]) svg += `<text x="${x(v)}" y="${H - 14}" text-anchor="middle">${v}%</text>`;
   for (const v of [0, 25, 50, 75, 100]) svg += `<text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${v}</text>`;
   svg += `<text x="${(L + W - R) / 2}" y="${H - 2}" text-anchor="middle">stated confidence</text>`;
   svg += `<text transform="translate(12 ${(T + H - Bm) / 2}) rotate(-90)" text-anchor="middle">realised hit rate %</text>`;
@@ -584,6 +589,7 @@ function renderSeg() {
   seg.querySelectorAll("button").forEach(b => b.onclick = () => { period = b.dataset.k; try { localStorage.setItem("ps_detail_period", period); } catch (e) {} renderSeg(); if (data) render(); });
 }
 renderSeg(); renderTz();
+{ const cb = document.getElementById("pv1"); cb.checked = includeV1; cb.onchange = () => { includeV1 = cb.checked; try { localStorage.setItem("ps_detail_pv1", includeV1 ? "1" : "0"); } catch (e) {} if (data) renderExpectancy(planPeriod(allZones)); }; }
 if (!token) {
   document.querySelector("main").innerHTML = `<div class="state err">This page needs the access link it was shared with.</div>`;
 } else {
