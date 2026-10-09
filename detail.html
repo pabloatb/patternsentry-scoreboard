@@ -90,6 +90,7 @@ td.r,th.r{text-align:right}
 .bg-good{background:var(--good)}.bg-mid{background:var(--mid)}.bg-bad{background:var(--bad)}.bg-dim{background:var(--neutral)}
 .chip{display:inline-block;font:500 11px var(--mono);padding:2px 8px;border-radius:999px;letter-spacing:.02em}
 .chip.hit{color:var(--good);background:var(--good-bg)}.chip.failed{color:var(--bad);background:var(--bad-bg)}.chip.expired{color:var(--muted);background:var(--surface-2)}
+.chip.trusted{color:var(--good);background:var(--good-bg)}.chip.muted{color:var(--bad);background:var(--bad-bg)}.chip.unproven,.chip.unclassified{color:var(--muted);background:var(--surface-2)}
 .chip.long{color:var(--good);background:var(--good-bg)}.chip.short{color:var(--bad);background:var(--bad-bg)}.chip.target{color:var(--ink-2);background:var(--surface-2)}
 /* heat matrix */
 .matrix{display:grid;gap:4px;font-size:12px}
@@ -176,7 +177,7 @@ footer{font-size:12px;color:var(--muted);display:flex;justify-content:space-betw
   </section>
 
   <section>
-    <h2>Paper trades in R <span>plans as shown in Telegram, filled at entry, resolved at stop (-1R) or target (+R:R); the scoreboard's hit flag is not used here</span></h2>
+    <h2>Paper trades in R <span>research only, not shown to users: entry at zone mid, stop one average bar past the edge, target at the next structure; filled at entry, resolved at stop (-1R) or target (+R:R)</span></h2>
     <div class="kpis" id="rkpis"></div>
     <div class="two" style="margin-top:12px">
       <div><h3>By source</h3><div class="card scroll"><table id="rsources"></table></div></div>
@@ -209,6 +210,12 @@ footer{font-size:12px;color:var(--muted);display:flex;justify-content:space-betw
     <div><h2>By confidence <span>AI % / confluence factors</span></h2><div class="card scroll"><table id="confidence"></table></div></div>
     <div><h2>Bars to resolution <span>median</span></h2><div class="card scroll"><table id="duration"></table></div></div>
     <div><h2>By platform</h2><div class="card scroll"><table id="platform"></table></div></div>
+  </section>
+
+  <section class="three">
+    <div><h2>Trust filter <span>what the filter said at birth</span></h2><div class="card scroll"><table id="trust"></table><div class="note">trusted = lower 95% bound of its bucket ≥ 45%; muted = upper bound &lt; 40% (drawn, not posted); unproven = not enough evidence yet. Calls born before the filter are unclassified.</div></div></div>
+    <div><h2>Deciding bucket <span>how narrow the evidence was</span></h2><div class="card scroll"><table id="tlevel"></table></div></div>
+    <div><h2>Muted share <span>of calls born in the period</span></h2><div class="card scroll"><table id="tshare"></table></div></div>
   </section>
 
   <section>
@@ -369,7 +376,7 @@ function partsIn(iso) {
   return { hour, wd, utcHour: d.getUTCHours() };
 }
 function parseZones(rows) {
-  return (rows || []).map(r => ({ sym: r[0], tf: r[1], ind: r[2], source: r[3], dir: r[4], kind: r[5], conf: r[6], status: r[7], bars: r[8], created: r[9], resolved: r[10], prr: r[11], pstatus: r[12], pr: r[13], presolved: r[14], fam: family(r[3]) }));
+  return (rows || []).map(r => ({ sym: r[0], tf: r[1], ind: r[2], source: r[3], dir: r[4], kind: r[5], conf: r[6], status: r[7], bars: r[8], created: r[9], resolved: r[10], prr: r[11], pstatus: r[12], pr: r[13], presolved: r[14], trust: r[15] || 'unclassified', tlevel: r[16], pv: r[17], fam: family(r[3]) }));
 }
 function resolvedIn(zs) {
   const days = period === "last_7d" ? 7 : period === "last_30d" ? 30 : null;
@@ -435,6 +442,22 @@ function renderSides(list) {
     for (const c of tally(sub, z => z.dir, ["long", "short"])) if (c.n) rows.push(row3(`${f === "all" ? "All" : esc(FAMILY_LABEL[f])} · <span class="chip ${c.k}">${c.k}</span>`, c));
   }
   tbl("sides", HEAD3, rows);
+}
+function renderTrust(list) {
+  const order = ["trusted", "unproven", "muted", "unclassified"];
+  tbl("trust", HEAD3, tally(list, z => z.trust, order).filter(c => c.n).map(c => row3(`<span class="chip ${c.k}">${c.k}</span>`, c)));
+  const lv = ["chart", "market", "source", "all"];
+  tbl("tlevel", HEAD3, tally(list.filter(z => z.tlevel), z => z.tlevel, lv).filter(c => c.n).map(c => row3(c.k, c)));
+  const days = period === "last_7d" ? 7 : period === "last_30d" ? 30 : null;
+  const since = days ? Date.now() - days * 86400e3 : -Infinity;
+  const born = allZones.filter(z => z.trust !== "unclassified" && z.created && new Date(z.created).getTime() >= since);
+  const rows = [];
+  for (const f of ["all", ...SRC_ORDER.filter(f => born.some(z => z.fam === f))]) {
+    const sub = f === "all" ? born : born.filter(z => z.fam === f);
+    const m = sub.filter(z => z.trust === "muted").length;
+    if (sub.length) rows.push(`<tr><td>${f === "all" ? "All" : esc(FAMILY_LABEL[f])}</td><td class="n">${Math.round(100 * m / sub.length)}%</td><td class="n">${m}</td><td class="n">${sub.length}</td></tr>`);
+  }
+  document.getElementById("tshare").innerHTML = `<thead><tr><th>Source</th><th class="n">Muted</th><th class="n">n</th><th class="n">Born</th></tr></thead><tbody>${rows.join("") || '<tr><td colspan="4" class="muted">no classified calls yet</td></tr>'}</tbody>`;
 }
 function renderConfidence(list) {
   const rows = [];
@@ -545,7 +568,7 @@ function renderCalibration(list) {
 let allZones = [];
 function renderCuts() {
   const list = resolvedIn(allZones);
-  renderHours(list); renderSessions(list); renderWeekdays(list); renderSides(list); renderConfidence(list); renderDuration(list); renderPlatform(list);
+  renderHours(list); renderSessions(list); renderWeekdays(list); renderSides(list); renderTrust(list); renderConfidence(list); renderDuration(list); renderPlatform(list);
   renderExpectancy(planPeriod(allZones)); renderCalibration(list);
 }
 
