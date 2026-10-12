@@ -213,7 +213,7 @@ footer{font-size:12px;color:var(--muted);display:flex;justify-content:space-betw
   </section>
 
   <section class="three">
-    <div><h2>Trust filter <span>what the filter said at birth</span></h2><div class="card scroll"><table id="trust"></table><div class="note">trusted = lower 95% bound of the deciding bucket ≥ 45%; muted = upper bound &lt; 40% (drawn, not posted, not in the public scoreboard; AI zones are labelled but always posted); unproven = no bucket of the source has 30 resolved calls. Calls born before the filter are unclassified.</div></div></div>
+    <div><h2>Trust filter <span>what the filter said at birth</span></h2><div class="card scroll"><table id="trust"></table><div class="note">trusted = lower 95% bound of the deciding bucket ≥ 45%; muted = upper bound &lt; 40%, or a delivery rule failed at birth (session window, post floor, source floor; the bucket column names the rule): drawn, not posted, not in the public scoreboard; unproven = no bucket of the source has 30 resolved calls. Calls born before the filter are unclassified.</div></div></div>
     <div><h2>Deciding bucket <span>how narrow the evidence was</span></h2><div class="card scroll"><table id="tlevel"></table></div></div>
     <div><h2>Muted share <span>of calls born in the period</span></h2><div class="card scroll"><table id="tshare"></table></div></div>
   </section>
@@ -230,6 +230,7 @@ footer{font-size:12px;color:var(--muted);display:flex;justify-content:space-betw
 
   <section class="rules" id="rules">
     <b>How a call is scored.</b> A zone is <b>touched</b> when a bar trades into it. It is a <b>hit</b> when price then reacts 1R beyond the zone (R = zone height, floored at half an average bar) and a <b>fail</b> when price pushes 0.5R through it; whichever comes first. The touch bar itself can only fail. Zones older than the age limit <b>expire</b> and are excluded from the hit rate. Objective zones (harmonic A-D band, Elliott ABC band) are hit when reached and failed when the stop is taken first. AI zones follow the same rules. This private view counts every call, muted ones included; the public scoreboard counts delivered calls only.
+    <br><b>Paper trades.</b> Entry at the band's midpoint once price has left the band on the trade side, stop one average bar past the far edge, target the next structure at least 1 ATR away (2 ATR when there is none); the first of stop or target closes the trade, both in one bar is a loss. After +1R the stop moves to the entry: a later stop-out is <b>breakeven</b> (0R, counted as a trade, not as a win). Objective zones are filled at detection at their own entry / stop.
     <br><span class="dim">Scores describe past price reactions at detected levels. They are not a prediction or a recommendation. Trading futures, forex and CFDs involves substantial risk of loss.</span>
   </section>
 
@@ -509,12 +510,12 @@ function renderTz() {
 }
 // ---- paper-trade expectancy ----
 function planStats(list) {
-  const t = list.filter(z => z.pstatus === "won" || z.pstatus === "lost");
-  const won = t.filter(z => z.pstatus === "won"), lost = t.filter(z => z.pstatus === "lost");
+  const t = list.filter(z => z.pstatus === "won" || z.pstatus === "lost" || z.pstatus === "be");
+  const won = t.filter(z => z.pstatus === "won"), lost = t.filter(z => z.pstatus === "lost"), be = t.filter(z => z.pstatus === "be");
   const R = t.reduce((a, z) => a + (z.pr || 0), 0);
   const open = list.filter(z => z.pstatus === "waiting" || z.pstatus === "filled").length;
   const avgRR = t.length ? t.reduce((a, z) => a + (z.prr || 0), 0) / t.length : null;
-  return { n: t.length, won: won.length, lost: lost.length, R, exp: t.length ? R / t.length : null, winRate: t.length ? 100 * won.length / t.length : null, avgRR, open };
+  return { n: t.length, won: won.length, lost: lost.length, be: be.length, R, exp: t.length ? R / t.length : null, winRate: t.length ? 100 * won.length / t.length : null, avgRR, open };
 }
 const rfmt = v => v == null ? "–" : (v > 0 ? "+" : "") + v.toFixed(2) + "R";
 const rcls = v => v == null ? "dim" : v > 0 ? "pos" : v < 0 ? "neg" : "";
@@ -527,7 +528,7 @@ function renderExpectancy(zsPeriod) {
   const all = planStats(list);
   document.getElementById("rkpis").innerHTML = `
     <div class="kpi"><div class="l">Expectancy / trade</div><div class="v ${rcls(all.exp)}">${rfmt(all.exp)}</div><div class="d">${all.n} closed paper trades</div></div>
-    <div class="kpi"><div class="l">Total R</div><div class="v ${rcls(all.R)}">${rfmt(all.R)}</div><div class="d">${all.won} won · ${all.lost} lost · ${all.open} open</div></div>
+    <div class="kpi"><div class="l">Total R</div><div class="v ${rcls(all.R)}">${rfmt(all.R)}</div><div class="d">${all.won} won · ${all.lost} lost${all.be ? ` · ${all.be} breakeven` : ""} · ${all.open} open</div></div>
     <div class="kpi"><div class="l">Win rate</div><div class="v">${all.winRate == null ? "–" : Math.round(all.winRate) + "%"}</div><div class="d">break-even at ${all.avgRR ? Math.round(100 / (1 + all.avgRR)) + "%" : "–"} for the average R:R</div></div>
     <div class="kpi"><div class="l">Average R:R shown</div><div class="v">${all.avgRR == null ? "–" : all.avgRR.toFixed(2)}</div><div class="d">target distance / stop distance</div></div>`;
   const fams = SRC_ORDER.filter(f => list.some(z => z.fam === f));
@@ -537,13 +538,13 @@ function renderExpectancy(zsPeriod) {
     .filter(c => c.st.n > 0 || c.st.open > 0).sort((a, b) => b.st.n - a.st.n);
   tbl("rmarkets", PLAN_HEAD, charts.map(c => planRow(`<span class="sym">${esc(c.sym)}</span><span class="tf">${esc(c.tf)}</span>`, c.st)));
 }
-// Plan version 2 (one-average-bar stop, the geometry users see) by default; v1 rows only when asked.
+// Plan versions 2+ (one-average-bar stop; v3 adds the pullback arm and breakeven) by default; v1 rows only when asked.
 let includeV1 = false;
 try { includeV1 = localStorage.getItem("ps_detail_pv1") === "1"; } catch (e) {}
 function planPeriod(zs) {
   const days = period === "last_7d" ? 7 : period === "last_30d" ? 30 : null;
   const since = days ? Date.now() - days * 86400e3 : -Infinity;
-  return zs.filter(z => z.pstatus && (includeV1 || z.pv === 2) && (z.pstatus === "waiting" || z.pstatus === "filled" || (z.presolved ? new Date(z.presolved).getTime() >= since : new Date(z.created).getTime() >= since)));
+  return zs.filter(z => z.pstatus && (includeV1 || z.pv >= 2) && (z.pstatus === "waiting" || z.pstatus === "filled" || (z.presolved ? new Date(z.presolved).getTime() >= since : new Date(z.created).getTime() >= since)));
 }
 
 // ---- AI calibration ----
