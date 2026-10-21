@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>PatternSentry · live scoreboard</title>
+<title>PatternSentry · research log</title>
 <meta name="description" content="Every call the PatternSentry indicators make on the author's own charts, scored by fixed rules and never edited. Live calls only.">
 <style>
 :root{--ink:#1f2937;--muted:#6b7280;--line:#e5e7eb;--bg:#ffffff;--accent:#2f6fed;--bar:#2f6fed;--bardim:#9db7f5}
@@ -23,14 +23,16 @@ th{color:var(--muted);font-weight:500;font-size:13px}
 .charts{font-size:13px;color:var(--muted)}
 a{color:var(--accent)}
 .err{color:#b91c1c}
+.pos{color:#15803d}.neg{color:#b91c1c}
+@media(prefers-color-scheme:dark){.pos{color:#4ade80}.neg{color:#f87171}}
 </style>
 </head>
 <body>
-<h1>PatternSentry · live scoreboard</h1>
-<div class="muted">Every call the indicators make on the author's own charts, scored by fixed rules, never edited. Live calls only; the backtest is not in these numbers. Delivered calls only: what the delivery rules muted is counted apart. <span id="session"></span> <span id="generated"></span></div>
+<h1>PatternSentry · research log</h1>
+<div class="muted">PatternSentry is a pattern scanner, not a signal service. This log records every call it delivers on the author's own charts and scores each one two ways with fixed rules, never edited: as a <b>paper trade</b> (entry, stop, target) and with a <b>reaction test</b> (did price react at the zone). Most sources are around break-even as trades, which is why the product is sold as a scanner. Live calls only; the backtest is not in these numbers. Delivered calls only: what the delivery rules muted is counted apart. <span id="session"></span> <span id="generated"></span></div>
 <div id="app"><p class="muted">Loading…</p></div>
 <p class="charts" id="charts"></p>
-<div class="rules"><b>Scoring rules.</b> A zone is <i>touched</i> when a bar trades into it; <i>hit</i> on a 1R reaction beyond it (R = zone height, floored at half an average bar), <i>failed</i> on a 0.5R push through it, <i>expired</i> after the age limit and excluded. Objective zones (harmonic A-D band, Elliott ABC band) are hit when reached and failed when the stop is taken first; both in one bar counts as failed. A touch bar can only fail, never hit. AI zones are scored with the same rules.<br><b>Delivery rules.</b> A call is delivered only if it is born inside the session window (bar time, UTC), is a confluence band of 2+ factors or a source whose own record is rated trusted, and the trust filter does not mute it: every new call is classed at birth as <i>trusted</i>, <i>unproven</i> or <i>muted</i> from the pooled record of its source on that chart, market or everywhere (95% Wilson bounds, 30+ resolved calls). Calls that fail a rule are recorded and scored but not delivered and are not in the tables above; they are counted in the line under each table. AI zones follow the same rules.<br><b>Paper trades.</b> Entry at the band's midpoint once price has left the band on the trade side, stop one average bar past the far edge, target the next structure at least 1 ATR away (2 ATR when there is none), stop moved to the entry after +1R; the first of stop or target closes the trade.<br>Scores describe past price reactions at detected levels and are not a prediction or a recommendation. Trading futures and CFDs involves substantial risk of loss.</div>
+<div class="rules"><b>Paper trades</b> are listed first because they are the closer test of usefulness; the reaction test says whether price reacted at a level, not whether a trade there would have paid.<br><b>Reaction test.</b> A zone is <i>touched</i> when a bar trades into it; <i>hit</i> on a 1R reaction beyond it (R = zone height, floored at half an average bar), <i>failed</i> on a 0.5R push through it, <i>expired</i> after the age limit and excluded. Objective zones (harmonic A-D band, Elliott ABC band) are hit when reached and failed when the stop is taken first; both in one bar counts as failed. A touch bar can only fail, never hit. AI zones are scored with the same rules.<br><b>Delivery rules.</b> A call is delivered only if it is born inside the session window (bar time, UTC), is a confluence band of 2+ factors or a source whose own record is rated trusted, and the trust filter does not mute it: every new call is classed at birth as <i>trusted</i>, <i>unproven</i> or <i>muted</i> from the pooled record of its source on that chart, market or everywhere (95% Wilson bounds, 30+ resolved calls). Calls that fail a rule are recorded and scored but not delivered and are not in the tables above; they are counted in the line under each table. AI zones follow the same rules.<br><b>Paper trades.</b> Entry at the band's midpoint once price has left the band on the trade side, stop one average bar past the far edge, target the next structure at least 1 ATR away (2 ATR when there is none), stop moved to the entry after +1R; the first of stop or target closes the trade.<br>Both scores describe what happened after past calls. They are not a prediction, a recommendation or a promise of results. Trading futures and CFDs involves substantial risk of loss.</div>
 <p class="muted">Telegram: @PatternSentryBot · <a id="json" href="#">raw data (JSON)</a></p>
 <script>
 const SRC = "https://gcznaaffmflukphvkusk.supabase.co/functions/v1/scoreboard?format=json";
@@ -42,25 +44,30 @@ function trustLine(trust) {
     .map(t => `${esc(t.trust)} ${t.hit_rate == null ? "–" : Math.round(t.hit_rate) + "%"} of ${t.hit + t.failed}${t.trust === "muted" ? " (not delivered)" : ""}`);
   return parts.length ? `<div class="muted" style="font-size:13px;margin-top:6px"><b>Trust filter at birth:</b> ${parts.join(" · ")}</div>` : "";
 }
-function section(title, rows, muted, trust) {
-  const tot = rows.reduce((a, r) => ({ hit: a.hit + r.hit, failed: a.failed + r.failed }), { hit: 0, failed: 0 });
-  const n = tot.hit + tot.failed;
+const fmtR = (v, d) => v == null ? "–" : (v > 0 ? "+" : "") + Number(v).toFixed(d) + "R";
+function section(title, rows, muted, trust, tot) {
+  rows = rows || [];
+  const t = tot || rows.reduce((a, r) => ({ trades: a.trades + (r.trades || 0), sum_r: a.sum_r + (r.sum_r || 0), resolved: a.resolved + r.hit + r.failed, hit: a.hit + r.hit }), { trades: 0, sum_r: 0, resolved: 0, hit: 0 });
+  const avg = t.avg_r != null ? t.avg_r : (t.trades ? t.sum_r / t.trades : null);
+  const hr = t.hit_rate != null ? t.hit_rate : (t.resolved ? 100 * t.hit / t.resolved : null);
   const body = rows.length ? rows.map(r => {
     const calls = r.hit + r.failed;
     const pct = r.hit_rate == null ? null : Math.round(r.hit_rate);
-    return `<tr><td>${esc(r.source)}</td><td class="n"><span class="bar${calls < 10 ? " dim" : ""}" style="width:${pct == null ? 0 : pct * 1.2}px"></span>${pct == null ? "–" : pct + "%"}</td><td class="n">${calls}</td><td class="n">${r.hit}</td><td class="n">${r.failed}</td><td class="n">${r.open}</td></tr>`;
+    const a = r.avg_r;
+    const cls = a == null ? "" : (a > 0 ? "pos" : a < 0 ? "neg" : "");
+    return `<tr><td>${esc(r.source)}</td><td class="n">${r.trades || 0}</td><td class="n ${cls}">${fmtR(a, 3)}</td><td class="n">${fmtR(r.sum_r, 1)}</td><td class="n muted">${pct == null ? "–" : pct + "%"} of ${calls}</td><td class="n">${r.open}</td></tr>`;
   }).join("") : `<tr><td colspan="6" class="muted">no resolved calls yet</td></tr>`;
   const m = muted ? muted.resolved + muted.open : 0;
-  return `<section><h2><span>${esc(title)}</span><span class="muted">${n} delivered calls resolved · ${n ? Math.round(100 * tot.hit / n) + "%" : "–"} hit</span></h2>
-<table><thead><tr><th>Source</th><th class="n">Hit rate</th><th class="n">Calls</th><th class="n">Hit</th><th class="n">Failed</th><th class="n">Open</th></tr></thead><tbody>${body}</tbody></table>
-<div class="muted" style="font-size:12px;margin-top:4px">lighter bars = fewer than 10 calls</div>
+  return `<section><h2><span>${esc(title)}</span><span class="muted">${t.trades} paper trades · ${fmtR(avg, 3)} per trade · reaction test ${hr == null ? "–" : Math.round(hr) + "%"} of ${t.resolved}</span></h2>
+<table><thead><tr><th>Source</th><th class="n">Paper trades</th><th class="n">Avg per trade</th><th class="n">Total</th><th class="n">Reaction test</th><th class="n">Open</th></tr></thead><tbody>${body}</tbody></table>
 <div class="muted" style="font-size:13px;margin-top:6px">${m} call${m === 1 ? "" : "s"} muted by the delivery rules: not delivered, not counted${muted && muted.open ? ` (${muted.open} still open)` : ""}.</div>${trustLine(trust)}</section>`;
 }
 fetch(SRC, { cache: "no-store" }).then(r => r.json()).then(d => {
   document.getElementById("generated").textContent = "Generated " + d.generated + ".";
   if (d.session && d.session.label) document.getElementById("session").textContent = "Session window: " + d.session.label + ".";
   const mu = d.muted || {}, tr = d.trust || {};
-  document.getElementById("app").innerHTML = section("Last 7 days", d.last_7d, mu.last_7d, tr.last_7d) + section("Last 30 days", d.last_30d, mu.last_30d, tr.last_30d) + section("All time", d.all_time, mu.all_time, tr.all_time);
+  const to = d.totals || {};
+  document.getElementById("app").innerHTML = section("Last 7 days", d.last_7d, mu.last_7d, tr.last_7d, to.last_7d) + section("Last 30 days", d.last_30d, mu.last_30d, tr.last_30d, to.last_30d) + section("All time", d.all_time, mu.all_time, tr.all_time, to.all_time);
   document.getElementById("charts").innerHTML = "<b>Charts in the record:</b> " + (d.charts.length ? d.charts.map(c => esc(c.chart)).join(", ") : "none yet");
 }).catch(e => { document.getElementById("app").innerHTML = `<p class="err">Could not load the scoreboard (${esc(e.message)}). Try again in a minute.</p>`; });
 </script>
